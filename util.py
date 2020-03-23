@@ -2,12 +2,12 @@ import mayavi
 from mayavi import mlab
 import numpy as np
 
-def _add_mesh(vertices, faces):
+def _add_mesh(vertices, faces, opacity=1.0):
     x = vertices[:, 0]
     y = vertices[:, 1]
     z = vertices[:, 2]
     
-    mayavi_mesh = mlab.triangular_mesh(x, y, z, faces)
+    mayavi_mesh = mlab.triangular_mesh(x, y, z, faces, opacity=opacity)
 
 def visualize_mesh(vertices, faces):
     _add_mesh(vertices, faces)

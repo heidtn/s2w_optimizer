@@ -2,14 +2,14 @@ import util
 import numpy as np
 import mc_lookups
 import trimesh
+import tetgen
+import pyvista as pv
 
 
 class VertexTracker:
-    def __init__(self, scale, offset):
+    def __init__(self):
         self.bisection_index = {}
         self.vertices = []
-        self.scale = scale
-        self.offset = offset
 
     def get_bisect(self, vert1, vert2):
         index = (x + y for x, y in zip(vert1, vert2))
@@ -17,29 +17,45 @@ class VertexTracker:
             vert_idx = self.bisection_index[index]
             return vert_idx
         else:
-            vert = (np.array(vert1) + np.array(vert2)) / 2.0
-            vert *= self.scale
-            vert += self.offset
-            self.vertices.append(vert.tolist())
+            self.vertices.append([(x + y)/2.0 for x, y in zip(vert1, vert2)])
             new_idx = len(self.vertices) - 1
             self.bisection_index[index] = new_idx
             return new_idx
 
 
 class MarchingCubeGenerator:
-    def __init__(self, scale_factors, offset):
+    def __init__(self):
         self.grid = None
-        self.scale_factors = scale_factors
-        self.vertex_tracker = VertexTracker(scale_factors, offset)
+        self.vertex_tracker = VertexTracker()
         self.tris = []
 
-    def generate_random(self, dimensions, thresh):
+    def generate_random(self, dimensions, thresh, scale_factors):
         self.grid = np.random.rand(*dimensions)
         self.dimensions = dimensions
+        self.scale_factors = scale_factors
         self.grid[self.grid < thresh] = 0
         self.mask = np.ones(self.grid.shape)
         self.mask[1:-1, 1:-1, 1:-1] = 0
         self.grid += self.mask
+
+    def clear_close_points(self, mesh, min_thresh):
+        # iterate through every point, find close ones, set them to 0
+        print("clearing close and external points")
+        for i in range(1, self.grid.shape[0] - 1):
+            for j in range(1, self.grid.shape[1] - 1):
+                for k in range(1, self.grid.shape[2] - 1):
+                    indices = np.array([i, j, k], dtype=np.float64)
+                    indices /= np.array(self.dimensions)
+                    indices -= 0.5
+                    indices *= self.scale_factors
+                    dist = trimesh.proximity.signed_distance(mesh, [indices])
+                    if dist[0] < min_thresh:
+                        self.grid[i, j, k] = 0.0
+        self.mask = np.zeros(self.grid.shape)
+        self.mask[1:-1, 1:-1, 1:-1] = 1.0
+        self.grid *= self.mask
+        print("clearing complete")
+
 
     def march(self):
         self.tris = []
@@ -76,19 +92,18 @@ class MarchingCubeGenerator:
         edges = mc_lookups.cases[index]
         return edges
 
-    def elimate_close_points(self, mesh):
-
-
 
 
 if __name__ == "__main__":
+    mesh = trimesh.load('featuretype.STL')
+    mesh2 = trimesh.load('featuretype.STL')
+
     marcher = MarchingCubeGenerator()
     marcher.generate_random([30, 30, 30], 0.4, [6, 5, 3])
+    marcher.clear_close_points(mesh, 0.15)
     marcher.march()
     
     #util.visualize_mesh(np.array(marcher.vertex_tracker.vertices), np.array(marcher.tris))
-    mesh = trimesh.load('featuretype.STL')
-    mesh2 = trimesh.load('featuretype.STL')
     hollow = trimesh.Trimesh(vertices=marcher.vertices, faces=marcher.tris)
     print("Hollow: ", hollow.is_watertight)
 
@@ -98,13 +113,50 @@ if __name__ == "__main__":
     #print("split meshes: ", len(meshes))
     trimesh.repair.fix_normals(hollow)
     trimesh.repair.fix_normals(mesh)
+    
     res = trimesh.boolean.intersection([hollow, mesh], engine='scad')
     print("res: ", res.faces)
 
-    res2 = trimesh.boolean.difference([mesh2, res])
-    print("res2: ", res2.faces)
+    res2 = trimesh.boolean.difference([mesh2, hollow])
+    print("res2: ", res2.is_watertight)
 
-    #util._add_mesh(mesh.vertices, mesh.faces)
+    res2.export("testout.obj")
+    print("res2 type: ", type(res2.vertices))
+    print("res2 verts: ", res2.vertices)
+
+    print("Moving on!")
+
+    tet = tetgen.TetGen(res2.vertices, res2.faces)
+    dispmesh = tet.mesh
+    dispmesh.plot()
+
+    tet.tetrahedralize(order=1, mindihedral=20, minratio=1.5, verbose=1)
+    grid = tet.grid
+    grid.save("testmsh.vtk")
+    grid.plot(show_edges=True)    
+
+    print(grid)
+    cells = grid.cells.reshape(-1, 5)[:, 1:]
+    cell_center = grid.points[cells].mean(1)
+
+    """
+    # extract cells below the 0 xy plane
+    for i in range(10):
+        mask = cell_center[:, 2] < (i+1) / 10.0 * (1.5)
+        cell_ind = mask.nonzero()[0]
+        subgrid = grid.extract_cells(cell_ind)
+
+        # advanced plotting
+        plotter = pv.Plotter()
+        plotter.add_mesh(subgrid, 'lightgrey', lighting=True, show_edges=True)
+        plotter.add_mesh(grid, 'r', 'wireframe')
+        plotter.add_legend([[' Input Mesh ', 'r'],
+                            [' Tesselated Mesh ', 'black']])
+        plotter.show()
+    """
+
+    #util._add_mesh(hollow.vertices, hollow.faces)
+    #util._add_mesh(mesh.vertices, mesh.faces, opacity=0.5)
     #util._add_mesh(res.vertices, res.faces)
-    util._add_mesh(res2.vertices, res2.faces)
+    util._add_mesh(res2.vertices, res2.faces, opacity=0.5)
     util.mlab.show()
