@@ -95,6 +95,30 @@ class MarchingCubeGenerator:
 
 
 if __name__ == "__main__":
+    def make_cube():
+        x = np.linspace(-0.5, 0.5, 25)
+        grid = pv.StructuredGrid(*np.meshgrid(x, x, x))
+        return grid.extract_surface().triangulate()
+
+    # Create to examplee PolyData meshes for boolean operations
+    sphere = pv.Sphere(radius=1.65, center=(0, 0, 0))
+    cube = pv.Sphere(radius=0.65, center=(0, 0, 0))
+
+    p = pv.Plotter()
+    p.add_mesh(sphere, color="yellow", opacity=0.5, show_edges=True)
+    p.add_mesh(cube, color="royalblue", opacity=0.5, show_edges=True)
+    p.show()
+
+    diff = sphere.boolean_difference(cube)
+
+    p = pv.Plotter()
+    p.add_mesh(diff, opacity=0.5, show_edges=True, color=True)
+    p.show()
+
+
+
+
+
     mesh = trimesh.load('featuretype.STL')
     mesh2 = trimesh.load('featuretype.STL')
 
@@ -108,7 +132,7 @@ if __name__ == "__main__":
     print("Hollow: ", hollow.is_watertight)
 
     
-    #meshes = hollow.split()
+    manymeshes = hollow.split()
     #[trimesh.repair.fix_normals(mesh, True) for mesh in meshes]
     #print("split meshes: ", len(meshes))
     trimesh.repair.fix_normals(hollow)
@@ -117,6 +141,26 @@ if __name__ == "__main__":
     res = trimesh.boolean.intersection([hollow, mesh], engine='scad')
     print("res: ", res.faces)
 
+    mesh2tet = tetgen.TetGen(mesh2.vertices, mesh2.faces)
+    hollowtet = tetgen.TetGen(hollow.vertices, hollow.faces)
+
+    print("about to subtract!")
+    hollowmesh = hollowtet.mesh
+    mesh2mesh = mesh2tet.mesh
+    p = pv.Plotter()
+    p.add_mesh(mesh2mesh, color="yellow", opacity=0.5, show_edges=True)
+    p.add_mesh(hollowmesh, color="royalblue", opacity=0.5, show_edges=True)
+    p.show()
+
+    newtest = hollowmesh.boolean_union(mesh2mesh)
+
+    #voided_part.plot()
+
+    #hollowtet.tetrahedralize(order=1, mindihedral=20, minratio=1.5)
+    #grid = hollowtet.grid
+    #grid.plot(show_edges=True)
+
+    """
     res2 = trimesh.boolean.difference([mesh2, hollow])
     print("res2: ", res2.is_watertight)
 
@@ -134,10 +178,11 @@ if __name__ == "__main__":
     grid = tet.grid
     grid.save("testmsh.vtk")
     grid.plot(show_edges=True)    
+    """
 
-    print(grid)
-    cells = grid.cells.reshape(-1, 5)[:, 1:]
-    cell_center = grid.points[cells].mean(1)
+    #print(grid)
+    #cells = grid.cells.reshape(-1, 5)[:, 1:]
+    #cell_center = grid.points[cells].mean(1)
 
     """
     # extract cells below the 0 xy plane
