@@ -95,29 +95,6 @@ class MarchingCubeGenerator:
 
 
 if __name__ == "__main__":
-    def make_cube():
-        x = np.linspace(-0.5, 0.5, 25)
-        grid = pv.StructuredGrid(*np.meshgrid(x, x, x))
-        return grid.extract_surface().triangulate()
-
-    # Create to examplee PolyData meshes for boolean operations
-    sphere = pv.Sphere(radius=1.65, center=(0, 0, 0))
-    cube = pv.Sphere(radius=0.65, center=(0, 0, 0))
-
-    p = pv.Plotter()
-    p.add_mesh(sphere, color="yellow", opacity=0.5, show_edges=True)
-    p.add_mesh(cube, color="royalblue", opacity=0.5, show_edges=True)
-    p.show()
-
-    diff = sphere.boolean_difference(cube)
-
-    p = pv.Plotter()
-    p.add_mesh(diff, opacity=0.5, show_edges=True, color=True)
-    p.show()
-
-
-
-
 
     mesh = trimesh.load('featuretype.STL')
     mesh2 = trimesh.load('featuretype.STL')
