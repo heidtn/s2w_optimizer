@@ -4,6 +4,8 @@ import mc_lookups
 import trimesh
 import tetgen
 import pyvista as pv
+from simplefem import simplefem
+import pygmsh
 
 
 class VertexTracker:
@@ -29,14 +31,23 @@ class MarchingCubeGenerator:
         self.vertex_tracker = VertexTracker()
         self.tris = []
 
-    def generate_random(self, dimensions, thresh, scale_factors):
-        self.grid = np.random.rand(*dimensions)
-        self.dimensions = dimensions
-        self.scale_factors = scale_factors
+    def generate_random(self, thresh, extents, density, center):
+        count = np.round(np.array(extents) * density).astype(np.int)
+        print("grid dimensions: ", count)
+        print("extents: ", extents)
+        self.grid = np.random.rand(*count)
+        self.set_grid(self.grid, thresh, extents, density, center)
+
+    def set_grid(self, grid, thresh, extents, density, center):
+        self.grid = np.array(grid)
+        count = np.round(np.array(extents) * density).astype(np.int)
+        self.dimensions = count
+        self.scale_factors = extents
         self.grid[self.grid < thresh] = 0
         self.mask = np.ones(self.grid.shape)
         self.mask[1:-1, 1:-1, 1:-1] = 0
         self.grid += self.mask
+        self.center = center
 
     def clear_close_points(self, mesh, min_thresh):
         # iterate through every point, find close ones, set them to 0
@@ -45,16 +56,17 @@ class MarchingCubeGenerator:
             for j in range(1, self.grid.shape[1] - 1):
                 for k in range(1, self.grid.shape[2] - 1):
                     indices = np.array([i, j, k], dtype=np.float64)
-                    indices /= np.array(self.dimensions)
+                    indices /= self.dimensions
                     indices -= 0.5
                     indices *= self.scale_factors
+                    indices += self.center
                     dist = trimesh.proximity.signed_distance(mesh, [indices])
                     if dist[0] < min_thresh:
                         self.grid[i, j, k] = 0.0
         self.mask = np.zeros(self.grid.shape)
         self.mask[1:-1, 1:-1, 1:-1] = 1.0
         self.grid *= self.mask
-        print("clearing complete")
+        print("clearing complete: ")
 
 
     def march(self):
@@ -79,12 +91,31 @@ class MarchingCubeGenerator:
                                 vertices.append(vert_index)
                             self.tris.append(vertices)
         self.adjust_vertices()
+
+    def generate_tetrahedral_hollowed_mesh(self, mesh, density, grid=None, thresh=0.25):
+        # density in points per square unit, 
+        # Does the whole generation process. If grid is None, generates a random one
+        extents = mesh.bounding_box.extents
+        center = mesh.bounds.mean(axis=0)
+        if grid:
+            self.set_grid(grid, thresh, extents, density, center)
+        else:
+            self.generate_random(thresh, extents, density, center)
+        self.clear_close_points(mesh, thresh)
+        self.march()
+
+        hollow = trimesh.Trimesh(vertices=self.vertices, faces=self.tris)
+
+        verts, tets = generate_dual_tetrahedrons(mesh, hollow)
+        return verts, tets
     
     def adjust_vertices(self):
         vertices = np.array(self.vertex_tracker.vertices)
+        print(vertices)
         vertices[:,:] /= np.array(self.dimensions, dtype=np.float64)
         vertices[:,:] -= 0.5
         vertices[:,:] *= self.scale_factors
+        vertices[:,:] += self.center
         self.vertices = vertices
     
     def lookup_cube(self, base, vertices):
@@ -93,92 +124,70 @@ class MarchingCubeGenerator:
         return edges
 
 
+def remove_tets_internal(internal_mesh, tets, vertices):
+    distances = trimesh.proximity.signed_distance(internal_mesh, vertices)
+    indices = np.argwhere(distances > 0)
+    index_set = set(indices.T.tolist()[0])
+    new_tets = []
+    for tet in tets:
+        valid_node = True
+        for node in tet:
+            if node in index_set:
+                valid_node = False
+        if valid_node:
+            new_tets.append(tet)
+    print("removed: ", len(tets) - len(new_tets), " elements")
+    return np.array(new_tets)
 
-if __name__ == "__main__":
+def remove_tets_convex(internal_mesh, tets, vertices):
+    # Need to remove tets that are inside the internal mesh, but
+    # not tests that are connected outside.  So any tet whose faces are all faces in the 
+    # Internal mesh should be removed.
+    new_tets = []
+    mesh_tris = set([frozenset(tri) for tri in internal_mesh.faces])
+    for tet in tets:
+        tet_wrap = tet.extend(tet)
+        tris = set([frozenset(tet_wrap[i:i+3]) for i in range(4)])
+        if not tris.issubset(mesh_tris):
+            new_tets.append(tet)
+    return new_tets
 
+def generate_dual_tetrahedrons(mesh, internal_mesh):
+    # Meshes are of trimesh type
+    diff = trimesh.boolean.difference((mesh, internal_mesh))
+    new_verts = diff.vertices
+    new_faces = diff.faces
+
+    tet = tetgen.TetGen(new_verts, new_faces)
+    tet.tetrahedralize(order=1)
+    grid = tet.grid
+    tets = simplefem.extract_tets(grid.cells)
+    verts = grid.points
+
+    new_tets = remove_tets_internal(internal_mesh, tets, verts)
+    new_tets = remove_tets_convex(internal_mesh, new_tets, verts)
+    simplefem.display_tets(verts, new_tets)
+    return verts, new_tets
+
+def test_full_gen():
+    bigcube = trimesh.creation.box((1, 1, 1))
+    smallcube = trimesh.creation.box((0.5, 0.5, 0.5))
+    generate_dual_tetrahedrons(bigcube, smallcube)
+
+def test_marcher():
     mesh = trimesh.load('featuretype.STL')
-    mesh2 = trimesh.load('featuretype.STL')
-
+    extents = mesh.bounding_box.extents
+    center = mesh.bounds.mean(axis=0)
+    print("extents: ", extents)
     marcher = MarchingCubeGenerator()
-    marcher.generate_random([30, 30, 30], 0.4, [6, 5, 3])
+    marcher.generate_random(0.25, extents, 10.0, center)
     marcher.clear_close_points(mesh, 0.15)
     marcher.march()
-    
-    #util.visualize_mesh(np.array(marcher.vertex_tracker.vertices), np.array(marcher.tris))
     hollow = trimesh.Trimesh(vertices=marcher.vertices, faces=marcher.tris)
-    print("Hollow: ", hollow.is_watertight)
+    hollow.show()
+    diff = trimesh.boolean.difference((mesh, hollow))
+    diff.show()
+    util.visualize_mesh(diff.vertices, diff.faces)
 
-    
-    manymeshes = hollow.split()
-    #[trimesh.repair.fix_normals(mesh, True) for mesh in meshes]
-    #print("split meshes: ", len(meshes))
-    trimesh.repair.fix_normals(hollow)
-    trimesh.repair.fix_normals(mesh)
-    
-    res = trimesh.boolean.intersection([hollow, mesh], engine='scad')
-    print("res: ", res.faces)
-
-    mesh2tet = tetgen.TetGen(mesh2.vertices, mesh2.faces)
-    hollowtet = tetgen.TetGen(hollow.vertices, hollow.faces)
-
-    print("about to subtract!")
-    hollowmesh = hollowtet.mesh
-    mesh2mesh = mesh2tet.mesh
-    p = pv.Plotter()
-    p.add_mesh(mesh2mesh, color="yellow", opacity=0.5, show_edges=True)
-    p.add_mesh(hollowmesh, color="royalblue", opacity=0.5, show_edges=True)
-    p.show()
-
-    newtest = hollowmesh.boolean_union(mesh2mesh)
-
-    #voided_part.plot()
-
-    #hollowtet.tetrahedralize(order=1, mindihedral=20, minratio=1.5)
-    #grid = hollowtet.grid
-    #grid.plot(show_edges=True)
-
-    """
-    res2 = trimesh.boolean.difference([mesh2, hollow])
-    print("res2: ", res2.is_watertight)
-
-    res2.export("testout.obj")
-    print("res2 type: ", type(res2.vertices))
-    print("res2 verts: ", res2.vertices)
-
-    print("Moving on!")
-
-    tet = tetgen.TetGen(res2.vertices, res2.faces)
-    dispmesh = tet.mesh
-    dispmesh.plot()
-
-    tet.tetrahedralize(order=1, mindihedral=20, minratio=1.5, verbose=1)
-    grid = tet.grid
-    grid.save("testmsh.vtk")
-    grid.plot(show_edges=True)    
-    """
-
-    #print(grid)
-    #cells = grid.cells.reshape(-1, 5)[:, 1:]
-    #cell_center = grid.points[cells].mean(1)
-
-    """
-    # extract cells below the 0 xy plane
-    for i in range(10):
-        mask = cell_center[:, 2] < (i+1) / 10.0 * (1.5)
-        cell_ind = mask.nonzero()[0]
-        subgrid = grid.extract_cells(cell_ind)
-
-        # advanced plotting
-        plotter = pv.Plotter()
-        plotter.add_mesh(subgrid, 'lightgrey', lighting=True, show_edges=True)
-        plotter.add_mesh(grid, 'r', 'wireframe')
-        plotter.add_legend([[' Input Mesh ', 'r'],
-                            [' Tesselated Mesh ', 'black']])
-        plotter.show()
-    """
-
-    #util._add_mesh(hollow.vertices, hollow.faces)
-    #util._add_mesh(mesh.vertices, mesh.faces, opacity=0.5)
-    #util._add_mesh(res.vertices, res.faces)
-    util._add_mesh(res2.vertices, res2.faces, opacity=0.5)
-    util.mlab.show()
+if __name__ == "__main__":
+    test_marcher()

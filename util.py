@@ -9,8 +9,8 @@ def _add_mesh(vertices, faces, opacity=1.0):
     
     mayavi_mesh = mlab.triangular_mesh(x, y, z, faces, opacity=opacity)
 
-def visualize_mesh(vertices, faces):
-    _add_mesh(vertices, faces)
+def visualize_mesh(vertices, faces, opacity=1.0):
+    _add_mesh(vertices, faces, opacity)
     mlab.show()
 
 def visualize_meshes(vertices, faces):
