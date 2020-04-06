@@ -31,14 +31,18 @@ class MarchingCubeGenerator:
         self.vertex_tracker = VertexTracker()
         self.tris = []
 
+    def __copy__(self):
+        new = MarchingCubeGenerator()
+        new.set_grid(self.grid, self.thresh, self.scale_factors, self.density, self.center)
+        return new
+
     def generate_random(self, thresh, extents, density, center):
         count = np.round(np.array(extents) * density).astype(np.int)
-        print("grid dimensions: ", count)
-        print("extents: ", extents)
         self.grid = np.random.rand(*count)
         self.set_grid(self.grid, thresh, extents, density, center)
 
     def set_grid(self, grid, thresh, extents, density, center):
+        self.thresh = thresh
         self.grid = np.array(grid)
         count = np.round(np.array(extents) * density).astype(np.int)
         self.dimensions = count
@@ -48,6 +52,7 @@ class MarchingCubeGenerator:
         self.mask[1:-1, 1:-1, 1:-1] = 0
         self.grid += self.mask
         self.center = center
+        self.density = density
 
     def clear_close_points(self, mesh, min_thresh):
         # iterate through every point, find close ones, set them to 0
@@ -97,7 +102,7 @@ class MarchingCubeGenerator:
         # Does the whole generation process. If grid is None, generates a random one
         extents = mesh.bounding_box.extents
         center = mesh.bounds.mean(axis=0)
-        if grid:
+        if grid is not None:
             self.set_grid(grid, thresh, extents, density, center)
         else:
             self.generate_random(thresh, extents, density, center)
@@ -107,11 +112,12 @@ class MarchingCubeGenerator:
         hollow = trimesh.Trimesh(vertices=self.vertices, faces=self.tris)
 
         verts, tets = generate_dual_tetrahedrons(mesh, hollow)
-        return verts, tets
+
+        new_volume = mesh.volume - hollow.volume
+        return verts, tets, new_volume
     
     def adjust_vertices(self):
         vertices = np.array(self.vertex_tracker.vertices)
-        print(vertices)
         vertices[:,:] /= np.array(self.dimensions, dtype=np.float64)
         vertices[:,:] -= 0.5
         vertices[:,:] *= self.scale_factors
@@ -146,7 +152,7 @@ def remove_tets_convex(internal_mesh, tets, vertices):
     new_tets = []
     mesh_tris = set([frozenset(tri) for tri in internal_mesh.faces])
     for tet in tets:
-        tet_wrap = tet.extend(tet)
+        tet_wrap = np.append(tet, tet)
         tris = set([frozenset(tet_wrap[i:i+3]) for i in range(4)])
         if not tris.issubset(mesh_tris):
             new_tets.append(tet)
@@ -164,9 +170,11 @@ def generate_dual_tetrahedrons(mesh, internal_mesh):
     tets = simplefem.extract_tets(grid.cells)
     verts = grid.points
 
-    new_tets = remove_tets_internal(internal_mesh, tets, verts)
-    new_tets = remove_tets_convex(internal_mesh, new_tets, verts)
-    simplefem.display_tets(verts, new_tets)
+    #new_tets = remove_tets_internal(internal_mesh, tets, verts)
+    new_tets = remove_tets_convex(internal_mesh, tets, verts)
+    verts = np.array(verts)
+    new_tets = np.array(new_tets)
+    #simplefem.display_tets(verts, new_tets)
     return verts, new_tets
 
 def test_full_gen():
@@ -186,6 +194,8 @@ def test_marcher():
     hollow = trimesh.Trimesh(vertices=marcher.vertices, faces=marcher.tris)
     hollow.show()
     diff = trimesh.boolean.difference((mesh, hollow))
+    print("diff volume: ", diff.volume)
+    print("mesh volume: ", mesh.volume)
     diff.show()
     util.visualize_mesh(diff.vertices, diff.faces)
 
