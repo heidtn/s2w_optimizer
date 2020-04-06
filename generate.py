@@ -10,6 +10,7 @@ import numpy as np
 import trimesh
 from numba import njit, prange, jit
 from multiprocessing import Pool
+import matplotlib.pyplot as plt
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,15 +19,24 @@ logger = logging.getLogger(__name__)
 Parameters = namedtuple('Parameters', ['density', 'thresh', 'loads', 'constraints', 'youngs', 'poisson'])
 
 
-def optimize(mesh, parameters, iterations=10):
+def optimize(mesh, parameters, iterations=50):
     logger.info("Creating initial population")
     population = create_population(parameters, mesh)
+    peak_fitnesses = []
+    mean_fitnesses = []
     for i in range(iterations):
         logger.info("Testing population")
         fitnesses = test_population(population, parameters, mesh)
         logger.info("Peak fitness is: %s", np.max(fitnesses))
+        peak_fitnesses.append(np.max(fitnesses))
+        mean_fitnesses.append(np.mean(fitnesses))
+        plt.plot(peak_fitnesses)
+        plt.plot(mean_fitnesses)
+        plt.legend(['peak fitness', 'mean fitness'], loc='upper left')
+        plt.savefig('plot_status.png')
+
         pop_fitnesses = list(zip(population, fitnesses))
-        pop_fitnesses.sort(key=lambda x: x[1], reverse=True)
+        pop_fitnesses.sort(key=lambda x: x[1], reverse=False)
         population = crossover(pop_fitnesses)
         mutate_offspring(population)
 
